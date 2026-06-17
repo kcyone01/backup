@@ -1,6 +1,6 @@
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
 
-// ─── Loading ─────────────────────────────────────────────────────────────────
+// ─── Loading ──────────────────────────────────────────────────────────────────
 const loadFill   = document.getElementById("load-fill");
 const loadScreen = document.getElementById("loading-screen");
 const loadStatus = document.getElementById("load-status");
@@ -23,6 +23,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 camera.position.z = 5;
+const camOrigin = new THREE.Vector3(0, 0, 5);
 
 const isMobile    = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 const mobileScale = isMobile ? 0.78 : 1;
@@ -56,12 +57,12 @@ texLoader.load("./assets/images/cactus.webp", tex => {
 });
 texLoader.load("./assets/images/background.png", tex => (scene.background = tex));
 
-// ─── High Score Storage ───────────────────────────────────────────────────────
+// ─── High Score ───────────────────────────────────────────────────────────────
 const HS_KEYS = { recon: "cs_hs_recon", standard: "cs_hs_standard", blacksite: "cs_hs_blacksite" };
 function getHighScore(diff) { return parseInt(localStorage.getItem(HS_KEYS[diff]) || "0", 10); }
 function setHighScore(diff, val) { localStorage.setItem(HS_KEYS[diff], val); }
 
-// ─── Difficulty Presets ───────────────────────────────────────────────────────
+// ─── Difficulty ───────────────────────────────────────────────────────────────
 const DIFFICULTIES = {
   recon:     { speed: 0.09,  interval: 1300, strafeSpeed: 0.07,  label: "RECON"     },
   standard:  { speed: 0.145, interval: 950,  strafeSpeed: 0.11,  label: "STANDARD"  },
@@ -81,9 +82,8 @@ const state = {
 state.score = 0; state.health = 100;
 
 function checkIntegrity() {
-  if ((XORKEY ^ state._score) !== state._shadowScore ||
+  if ((XORKEY ^ state._score)  !== state._shadowScore ||
       (XORKEY ^ state._health) !== state._shadowHealth) {
-    console.error("TACTICAL ERROR: MEMORY CORRUPTION DETECTED");
     location.reload(); return false;
   }
   return true;
@@ -99,19 +99,19 @@ let cactusSpeed      = 0.145;
 let spawnInterval    = 950;
 let strafeSpeed      = 0.11;
 
-// ─── Combo / Streak ───────────────────────────────────────────────────────────
-let currentStreak    = 0;
-let bestStreak       = 0;
-let comboMultiplier  = 1;
-let comboTimer       = 0;
-const COMBO_WINDOW   = 3000;
+// ─── Combo ────────────────────────────────────────────────────────────────────
+let currentStreak   = 0;
+let bestStreak      = 0;
+let comboMultiplier = 1;
+let comboTimer      = 0;
+const COMBO_WINDOW  = 3000;
 const COMBO_THRESHOLDS = [5, 10];
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 let totalShots = 0;
 let totalHits  = 0;
 
-// ─── Daily Challenge ─────────────────────────────────────────────────────────
+// ─── Daily Challenge ──────────────────────────────────────────────────────────
 let isDailyChallenge = false;
 function getDailySeed() {
   const d = new Date();
@@ -127,54 +127,87 @@ function makeRng(seed) {
 }
 let rng = Math.random;
 
-// ─── Power-up system ─────────────────────────────────────────────────────────
-// Types: 'health' | 'rapidfire' | 'shield'
-const POWERUP_TYPES = ['health', 'rapidfire', 'shield'];
-const POWERUP_DROP_CHANCE = 0.18; // 18% chance per kill
-const POWERUP_COLORS = { health: 0x00ff88, rapidfire: 0xff6600, shield: 0x00aaff };
-const POWERUP_LABELS = { health: '❤️', rapidfire: '⚡', shield: '🛡️' };
-const POWERUP_DURATION = { rapidfire: 5000, shield: 6000 }; // ms
+// ─── Power-up system (tap-to-collect) ────────────────────────────────────────
+// On mobile: orbs appear as large tappable HTML buttons overlaid on screen.
+// On desktop: orbs appear in 3D and are shot/clicked like cacti.
+// This removes all fragile 3D→screen projection and Z-collision logic.
 
-let powerups = []; // { mesh, labelEl, type, vel, life, bobPhase }
+const POWERUP_TYPES    = ['health', 'rapidfire', 'shield'];
+const POWERUP_DROP_CHANCE = 0.20;
+const POWERUP_DURATION = { rapidfire: 5000, shield: 6000 };
+const POWERUP_META = {
+  health:    { icon: '❤️', label: 'HEALTH',     color: '#00ff88', glow: '#00ff8855' },
+  rapidfire: { icon: '⚡', label: 'RAPID FIRE', color: '#ff6600', glow: '#ff660055' },
+  shield:    { icon: '🛡️', label: 'SHIELD',     color: '#00aaff', glow: '#00aaff55' },
+};
 
-// Active buff timers
+let powerups      = [];  // { el, type, expireAt, x, y }  — HTML overlay items
 let rapidFireUntil = 0;
 let shieldUntil    = 0;
 let shieldActive   = false;
 
-// DOM indicators for active buffs
-const elBuffBar = document.createElement("div");
-elBuffBar.id = "buff-bar";
-elBuffBar.style.cssText = `
-  position:absolute; bottom:140px; left:60px;
-  display:flex; gap:10px; pointer-events:none; z-index:25;
-`;
-document.getElementById("cs2-hud").appendChild(elBuffBar);
+// Container for all power-up overlay buttons
+const elPowerupLayer = document.createElement("div");
+elPowerupLayer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:40;";
+document.body.appendChild(elPowerupLayer);
 
-function makeBuffPill(id, icon, color) {
-  const el = document.createElement("div");
-  el.id = id;
+function spawnPowerup(screenX, screenY) {
+  const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+  const meta = POWERUP_META[type];
+
+  // Clamp spawn position to a safe area away from HUD edges
+  const margin = 80;
+  const sx = Math.min(Math.max(screenX, margin), window.innerWidth  - margin);
+  const sy = Math.min(Math.max(screenY, margin + 60), window.innerHeight - margin);
+
+  const el = document.createElement("button");
   el.style.cssText = `
-    display:none; align-items:center; gap:6px;
-    background:rgba(0,0,0,0.85); border:2px solid ${color};
-    padding:4px 12px; font-size:0.7rem; letter-spacing:2px; color:${color};
-    font-weight:900; box-shadow:0 0 12px ${color}44;
+    position:absolute;
+    left:${sx}px; top:${sy}px;
+    transform:translate(-50%,-50%);
+    width:${isMobile ? 68 : 56}px;
+    height:${isMobile ? 68 : 56}px;
+    border-radius:50%;
+    border:3px solid ${meta.color};
+    background:rgba(0,0,0,0.82);
+    box-shadow:0 0 18px ${meta.glow}, inset 0 0 10px ${meta.glow};
+    font-size:${isMobile ? "1.7rem" : "1.4rem"};
+    cursor:pointer;
+    pointer-events:all;
+    display:flex; align-items:center; justify-content:center;
+    animation:powerup-bob 0.9s ease-in-out infinite alternate;
+    -webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+    z-index:41;
   `;
-  el.innerHTML = `${icon} <span id="${id}-timer"></span>`;
-  elBuffBar.appendChild(el);
-  return el;
-}
-const pillRapid  = makeBuffPill("buff-rapid",  "⚡ RAPID FIRE", "#ff6600");
-const pillShield = makeBuffPill("buff-shield", "🛡️ SHIELD",     "#00aaff");
+  el.innerText = meta.icon;
+  el.title = meta.label;
 
-function updateBuffPills(now) {
-  const rfLeft = Math.max(0, rapidFireUntil - now);
-  const shLeft = Math.max(0, shieldUntil   - now);
-  pillRapid.style.display  = rfLeft > 0 ? "flex" : "none";
-  pillShield.style.display = shLeft > 0 ? "flex" : "none";
-  if (rfLeft > 0) document.getElementById("buff-rapid-timer").innerText  = (rfLeft / 1000).toFixed(1) + "s";
-  if (shLeft > 0) document.getElementById("buff-shield-timer").innerText = (shLeft / 1000).toFixed(1) + "s";
-  shieldActive = shLeft > 0;
+  const expireAt = Date.now() + 7000;
+
+  // Shrink ring shows time remaining
+  const ring = document.createElement("div");
+  ring.style.cssText = `
+    position:absolute;inset:-5px;border-radius:50%;
+    border:2px solid ${meta.color};
+    animation:powerup-shrink 7s linear forwards;
+    pointer-events:none;
+  `;
+  el.appendChild(ring);
+  elPowerupLayer.appendChild(el);
+
+  const entry = { el, type, expireAt };
+  powerups.push(entry);
+
+  el.addEventListener("click",      () => collectPowerup(entry));
+  el.addEventListener("touchstart", (e) => { e.preventDefault(); collectPowerup(entry); }, { passive: false });
+}
+
+function collectPowerup(entry) {
+  if (!entry.el.isConnected) return;
+  entry.el.remove();
+  powerups = powerups.filter(p => p !== entry);
+  activatePowerup(entry.type);
 }
 
 function activatePowerup(type) {
@@ -192,14 +225,89 @@ function activatePowerup(type) {
   }
 }
 
-// Small floating toast for pickup feedback
+function updatePowerups() {
+  const now = Date.now();
+  for (let i = powerups.length - 1; i >= 0; i--) {
+    if (now >= powerups[i].expireAt) {
+      powerups[i].el.remove();
+      powerups.splice(i, 1);
+    }
+  }
+}
+
+function clearPowerups() {
+  powerups.forEach(p => p.el.remove());
+  powerups = [];
+}
+
+// Convert 3D world position → screen pixel coords (used for spawn placement)
+function worldToScreen(pos3d) {
+  const v = pos3d.clone().project(camera);
+  return {
+    x: (v.x *  0.5 + 0.5) * window.innerWidth,
+    y: (v.y * -0.5 + 0.5) * window.innerHeight,
+  };
+}
+
+// Inject keyframe animations for power-up orbs
+const styleSheet = document.createElement("style");
+styleSheet.textContent = `
+  @keyframes powerup-bob {
+    from { transform: translate(-50%,-50%) translateY(0px); }
+    to   { transform: translate(-50%,-50%) translateY(-8px); }
+  }
+  @keyframes powerup-shrink {
+    from { transform: scale(1);   opacity:1; }
+    to   { transform: scale(0.1); opacity:0; }
+  }
+`;
+document.head.appendChild(styleSheet);
+
+// ─── Buff pill indicators ─────────────────────────────────────────────────────
+const elBuffBar = document.createElement("div");
+elBuffBar.id = "buff-bar";
+elBuffBar.style.cssText = `
+  position:absolute; bottom:140px; left:60px;
+  display:flex; gap:10px; pointer-events:none; z-index:25;
+`;
+document.getElementById("cs2-hud").appendChild(elBuffBar);
+
+function makeBuffPill(id, icon, color) {
+  const el = document.createElement("div");
+  el.id = id;
+  el.style.cssText = `
+    display:none; align-items:center; gap:6px;
+    background:rgba(0,0,0,0.88); border:2px solid ${color};
+    padding:5px 14px; font-size:0.7rem; letter-spacing:2px; color:${color};
+    font-weight:900; box-shadow:0 0 14px ${color}55;
+    font-family:'Orbitron',sans-serif;
+  `;
+  el.innerHTML = `${icon} <span id="${id}-timer" style="min-width:28px;display:inline-block"></span>`;
+  elBuffBar.appendChild(el);
+  return el;
+}
+const pillRapid  = makeBuffPill("buff-rapid",  "⚡ RAPID FIRE", "#ff6600");
+const pillShield = makeBuffPill("buff-shield", "🛡️ SHIELD",     "#00aaff");
+
+function updateBuffPills(now) {
+  const rfLeft = Math.max(0, rapidFireUntil - now);
+  const shLeft = Math.max(0, shieldUntil   - now);
+  pillRapid.style.display  = rfLeft > 0 ? "flex" : "none";
+  pillShield.style.display = shLeft > 0 ? "flex" : "none";
+  if (rfLeft > 0) document.getElementById("buff-rapid-timer").innerText  = (rfLeft / 1000).toFixed(1) + "s";
+  if (shLeft > 0) document.getElementById("buff-shield-timer").innerText = (shLeft / 1000).toFixed(1) + "s";
+  shieldActive = shLeft > 0;
+}
+
+// ─── Pickup toast ─────────────────────────────────────────────────────────────
 let toastTimeout = null;
 const elToast = document.createElement("div");
 elToast.style.cssText = `
-  position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
-  font-size:1.4rem; font-weight:900; letter-spacing:4px;
+  position:fixed; top:42%; left:50%; transform:translate(-50%,-50%);
+  font-size:1.5rem; font-weight:900; letter-spacing:4px;
   pointer-events:none; z-index:200; opacity:0;
   transition:opacity 0.15s; text-shadow:0 0 20px currentColor;
+  font-family:'Orbitron',sans-serif;
 `;
 document.body.appendChild(elToast);
 function showPickupToast(msg, color) {
@@ -207,95 +315,12 @@ function showPickupToast(msg, color) {
   elToast.style.color = color;
   elToast.style.opacity = "1";
   clearTimeout(toastTimeout);
-  toastTimeout = setTimeout(() => (elToast.style.opacity = "0"), 900);
-}
-
-// Spawn a floating power-up orb at a 3D position
-function spawnPowerup(pos) {
-  const type  = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
-  const color = POWERUP_COLORS[type];
-
-  // Glowing orb mesh
-  const geo  = new THREE.SphereGeometry(0.9, 10, 10);
-  const mat  = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.92 });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.copy(pos);
-  mesh.position.z = Math.min(pos.z + 2, 4); // pull toward player a bit
-  scene.add(mesh);
-
-  // HTML label floating over it
-  const labelEl = document.createElement("div");
-  labelEl.style.cssText = `
-    position:fixed; pointer-events:none; z-index:30;
-    font-size:1.4rem; transform:translate(-50%,-50%);
-    filter:drop-shadow(0 0 6px white);
-  `;
-  labelEl.innerText = POWERUP_LABELS[type];
-  document.body.appendChild(labelEl);
-
-  powerups.push({ mesh, labelEl, type, life: 6.0, bobPhase: Math.random() * Math.PI * 2 });
-}
-
-// Project 3D position to screen coords for label placement
-function toScreen(pos3d) {
-  const v = pos3d.clone().project(camera);
-  return {
-    x: (v.x * 0.5 + 0.5) * window.innerWidth,
-    y: (-v.y * 0.5 + 0.5) * window.innerHeight,
-  };
-}
-
-// Update all floating power-ups each frame
-function updatePowerups(dt) {
-  const now = Date.now();
-  for (let i = powerups.length - 1; i >= 0; i--) {
-    const p = powerups[i];
-    p.life -= dt / 1000;
-
-    // Bob gently
-    p.bobPhase += dt * 0.003;
-    p.mesh.position.y += Math.sin(p.bobPhase) * 0.01;
-
-    // Drift toward camera
-    p.mesh.position.z += 0.04;
-
-    // Pulse opacity
-    p.mesh.material.opacity = 0.7 + 0.3 * Math.sin(p.bobPhase * 2);
-
-    // Update label position
-    const sc = toScreen(p.mesh.position);
-    p.labelEl.style.left = sc.x + "px";
-    p.labelEl.style.top  = (sc.y - 30) + "px";
-
-    // Player collision — close enough in Z and roughly centered on screen
-    const distZ = Math.abs(p.mesh.position.z - camera.position.z);
-    if (distZ < 8 && p.mesh.position.z > 3) {
-      // Collect it!
-      activatePowerup(p.type);
-      scene.remove(p.mesh);
-      p.labelEl.remove();
-      powerups.splice(i, 1);
-      continue;
-    }
-
-    // Expire
-    if (p.life <= 0 || p.mesh.position.z > 10) {
-      scene.remove(p.mesh);
-      p.labelEl.remove();
-      powerups.splice(i, 1);
-    }
-  }
-}
-
-function clearPowerups() {
-  powerups.forEach(p => { scene.remove(p.mesh); p.labelEl.remove(); });
-  powerups = [];
+  toastTimeout = setTimeout(() => (elToast.style.opacity = "0"), 950);
 }
 
 // ─── Screen shake + red flash ─────────────────────────────────────────────────
 let shakeTimer     = 0;
 let shakeMagnitude = 0;
-const camOrigin    = new THREE.Vector3(0, 0, 5);
 
 const elDamageFlash = document.createElement("div");
 elDamageFlash.style.cssText = `
@@ -305,22 +330,16 @@ elDamageFlash.style.cssText = `
 document.body.appendChild(elDamageFlash);
 
 function triggerDamageEffect() {
-  // Flash
   elDamageFlash.style.background = "rgba(255,0,0,0.35)";
   setTimeout(() => (elDamageFlash.style.background = "rgba(255,0,0,0)"), 180);
-  // Shake
-  shakeTimer     = 400; // ms
-  shakeMagnitude = 0.22;
+  shakeTimer     = 380;
+  shakeMagnitude = 0.18;
 }
 
 function updateShake(dt) {
-  if (shakeTimer <= 0) {
-    camera.position.copy(camOrigin);
-    return;
-  }
+  if (shakeTimer <= 0) { camera.position.copy(camOrigin); return; }
   shakeTimer -= dt;
-  const t = shakeTimer / 400;
-  const mag = shakeMagnitude * t;
+  const mag = shakeMagnitude * (shakeTimer / 380);
   camera.position.set(
     camOrigin.x + (Math.random() - 0.5) * mag,
     camOrigin.y + (Math.random() - 0.5) * mag,
@@ -345,7 +364,12 @@ const elLevelFlash   = document.getElementById("levelup-flash");
 
 // Level indicator
 const elLevelWrap = document.createElement("div");
-elLevelWrap.style.cssText = `position:absolute;top:${isMobile?"20px":"40px"};right:${isMobile?"20px":"60px"};color:#00ff00;font-size:${isMobile?"0.8rem":"1.1rem"};font-weight:700;letter-spacing:3px;text-shadow:0 0 12px #00ff00;pointer-events:none`;
+elLevelWrap.style.cssText = `
+  position:absolute;top:${isMobile?"20px":"40px"};right:${isMobile?"20px":"60px"};
+  color:#00ff00;font-size:${isMobile?"0.8rem":"1.1rem"};
+  font-weight:700;letter-spacing:3px;text-shadow:0 0 12px #00ff00;pointer-events:none;
+  font-family:'Orbitron',sans-serif;
+`;
 elLevelWrap.innerHTML = `LEVEL <span id="level-val" style="font-size:${isMobile?"1.1rem":"1.4rem"};margin-left:8px;">01</span>`;
 document.getElementById("cs2-hud").appendChild(elLevelWrap);
 
@@ -365,7 +389,6 @@ function updateHud(scoreFlash = false) {
     : elHealthBar.classList.remove("low-health-warning");
 }
 
-// ─── Combo HUD ────────────────────────────────────────────────────────────────
 function updateComboHud() {
   if (comboMultiplier <= 1 && currentStreak === 0) {
     elComboHud.style.display = "none"; return;
@@ -376,7 +399,6 @@ function updateComboHud() {
   elComboBar.style.width = pct + "%";
 }
 
-// ─── Level-up flash ───────────────────────────────────────────────────────────
 function triggerLevelUpFlash(lvl) {
   elLevelFlash.innerHTML = `<div id="levelup-flash-text">⚡ LEVEL ${lvl} ⚡</div>`;
   elLevelFlash.classList.remove("active");
@@ -384,23 +406,57 @@ function triggerLevelUpFlash(lvl) {
   elLevelFlash.classList.add("active");
 }
 
-// ─── Spawn cactus ─────────────────────────────────────────────────────────────
+// ─── Improved spawn system ────────────────────────────────────────────────────
+// Cacti spawn in one of 5 named lanes so spread is deliberate, not random clumps.
+// Each spawn gets a randomised Z depth offset so they arrive staggered, not
+// in a single flat wave. Size also varies slightly per spawn for visual depth.
+
+const LANES      = [-2.8, -1.4, 0, 1.4, 2.8]; // X positions (world units)
+let   lastLane   = -1;  // track last lane to avoid same-lane back-to-back
+
+function getFrustumWidth() {
+  const fovRad = THREE.MathUtils.degToRad(camera.fov);
+  const frustH = 2 * Math.tan(fovRad / 2) * 40;
+  return frustH * camera.aspect * (window.innerWidth < 768 ? 0.62 : 0.72);
+}
+
 function spawnCactus() {
   if (!cactusMaterial || !gameRunning) return;
-  const fovRad = THREE.MathUtils.degToRad(camera.fov);
-  const frustH = 2 * Math.tan(fovRad / 2) * Math.abs(-40);
-  const frustW = frustH * camera.aspect * (window.innerWidth < 768 ? 0.6 : 0.7);
+
+  // Pick a lane, biased away from the last one
+  let laneIdx;
+  do { laneIdx = Math.floor(rng() * LANES.length); }
+  while (laneIdx === lastLane && LANES.length > 1);
+  lastLane = laneIdx;
+
+  const laneX  = LANES[laneIdx];
+  // Jitter within the lane so it doesn't feel on-rails
+  const jitter = (rng() - 0.5) * 1.2;
+  const x      = laneX + jitter;
+
+  // Stagger depth: randomise spawn Z so cacti don't arrive in a flat wall
+  const zDepth = -38 - rng() * 10; // between -38 and -48
+
+  // Slight size variance for perceived depth
+  const baseSize  = window.innerWidth < 768 ? 3.8 : 7.3;
+  const sizeScale = 0.75 + rng() * 0.5; // 75%–125% of base
+  const sz        = baseSize * mobileScale * sizeScale;
+
   const sprite = new THREE.Sprite(cactusMaterial);
-  const sz = window.innerWidth < 768 ? 3.8 : 7.3;
-  sprite.scale.set(sz * mobileScale, sz * mobileScale, 1);
-  const x = (rng() - 0.5) * frustW;
-  const y = (rng() - 0.5) * (0.38 * frustH) + 2.2;
-  sprite.position.set(x, y, -42);
+  sprite.scale.set(sz, sz, 1);
+
+  const y = (rng() - 0.5) * 3.5 + 2.0;
+  sprite.position.set(x, y, zDepth);
+
+  // Speed also varies slightly per cactus so they don't travel in lock-step
+  const speedVariance = 0.85 + rng() * 0.3;
+
   sprite.userData = {
-    rotSpeed:  0.13 * (rng() - 0.5),
-    strafeDir: rng() > 0.5 ? 1 : -1,
-    limitX:    frustW / 2,
-    canStrafe: level >= 11,
+    rotSpeed:      0.13 * (rng() - 0.5),
+    strafeDir:     rng() > 0.5 ? 1 : -1,
+    limitX:        getFrustumWidth() / 2,
+    canStrafe:     level >= 11,
+    speedVariance,
   };
   scene.add(sprite);
   cacti.push(sprite);
@@ -434,7 +490,7 @@ function spawnParticles(pos) {
   }
 }
 
-// ─── High score / stats helpers ───────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function refreshMenuHighScore() {
   const hs = getHighScore(selectedDifficulty);
   document.getElementById("menu-highscore").innerText = hs.toString().padStart(3, "0");
@@ -471,10 +527,14 @@ const raycaster  = new THREE.Raycaster();
 const pointer    = new THREE.Vector2();
 let lastShotTime = 0;
 
+// Last known raw screen tap position (for power-up spawn placement)
+let lastTapX = window.innerWidth  / 2;
+let lastTapY = window.innerHeight / 2;
+
 function shoot() {
   if (!gameRunning) return;
   const now = performance.now();
-  const cooldown = (rapidFireUntil > Date.now()) ? 25 : 65; // rapid fire halves cooldown
+  const cooldown = (rapidFireUntil > Date.now()) ? 22 : 65;
   if (now - lastShotTime < cooldown) return;
   lastShotTime = now;
   totalShots++;
@@ -487,20 +547,21 @@ function shoot() {
 
     // Combo
     currentStreak++;
-    bestStreak     = Math.max(bestStreak, currentStreak);
-    comboTimer     = 0;
+    bestStreak      = Math.max(bestStreak, currentStreak);
+    comboTimer      = 0;
     comboMultiplier = currentStreak >= COMBO_THRESHOLDS[1] ? 3
                     : currentStreak >= COMBO_THRESHOLDS[0] ? 2 : 1;
 
     playSound(sndHit);
     spawnParticles(target.position);
 
-    // Power-up drop
-    if (Math.random() < POWERUP_DROP_CHANCE) spawnPowerup(target.position);
+    // Power-up: spawn near where the player tapped, not at the cactus 3D pos
+    if (Math.random() < POWERUP_DROP_CHANCE) {
+      spawnPowerup(lastTapX, lastTapY);
+    }
 
     scene.remove(target);
     cacti.splice(cacti.indexOf(target), 1);
-
     state.score += comboMultiplier;
     updateHud(true);
 
@@ -524,10 +585,9 @@ function shoot() {
       }
     }
   } else {
-    // Miss
-    currentStreak    = 0;
-    comboMultiplier  = 1;
-    comboTimer       = 0;
+    currentStreak   = 0;
+    comboMultiplier = 1;
+    comboTimer      = 0;
   }
 }
 
@@ -535,8 +595,15 @@ function shoot() {
 function handlePointer(e) {
   if (!gameRunning) return;
   let cx, cy;
-  if (e.type.includes("touch")) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
-  else                          { cx = e.clientX;             cy = e.clientY; }
+  if (e.type.includes("touch")) {
+    cx = e.touches[0].clientX;
+    cy = e.touches[0].clientY;
+  } else {
+    cx = e.clientX;
+    cy = e.clientY;
+  }
+  lastTapX = cx;
+  lastTapY = cy;
   if (elCrosshair && gameRunning) {
     const n = isMobile ? 12 : 16;
     elCrosshair.style.display   = "block";
@@ -551,7 +618,7 @@ function handlePointer(e) {
 function startGame() {
   cacti.forEach(c => scene.remove(c));
   particles.forEach(p => scene.remove(p.mesh));
-  cacti.length = 0;
+  cacti.length     = 0;
   particles.length = 0;
   clearPowerups();
 
@@ -565,7 +632,7 @@ function startGame() {
   currentStreak = 0; bestStreak = 0;
   comboMultiplier = 1; comboTimer = 0;
   rapidFireUntil = 0; shieldUntil = 0; shieldActive = false;
-  shakeTimer = 0;
+  shakeTimer = 0; lastLane = -1;
   camera.position.copy(camOrigin);
 
   const preset  = DIFFICULTIES[selectedDifficulty];
@@ -622,9 +689,9 @@ document.getElementById("victory-restart-btn").onclick = () => { isDailyChalleng
 document.getElementById("victory-menu-btn").onclick    = () => location.reload();
 
 window.addEventListener("mousedown",  handlePointer);
-window.addEventListener("touchstart", handlePointer);
+window.addEventListener("touchstart", handlePointer, { passive: false });
 window.addEventListener("mousemove",  handlePointer);
-window.addEventListener("touchmove",  handlePointer);
+window.addEventListener("touchmove",  handlePointer, { passive: false });
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -641,12 +708,13 @@ const particles = [];
 (function loop() {
   requestAnimationFrame(loop);
   const now = Date.now();
-  const dt  = now - lastFrameTime;
+  const dt  = Math.min(now - lastFrameTime, 100); // cap dt to avoid spiral
   lastFrameTime = now;
 
   if (gameRunning) {
     updateBuffPills(now);
     updateShake(dt);
+    updatePowerups();
 
     // Combo decay
     comboTimer += dt;
@@ -657,7 +725,8 @@ const particles = [];
 
     // Spawn
     accumulator += dt;
-    while (accumulator >= spawnInterval && cacti.length < (isMobile ? 26 : 42)) {
+    const cap = isMobile ? 20 : 38;
+    while (accumulator >= spawnInterval && cacti.length < cap) {
       spawnCactus();
       accumulator -= spawnInterval;
     }
@@ -666,7 +735,7 @@ const particles = [];
     for (let i = cacti.length - 1; i >= 0; i--) {
       const c  = cacti[i];
       const ud = c.userData;
-      c.position.z += cactusSpeed;
+      c.position.z += cactusSpeed * ud.speedVariance;
       if (ud.canStrafe) {
         c.position.x += ud.strafeDir * strafeSpeed;
         if (Math.abs(c.position.x) > ud.limitX) {
@@ -682,7 +751,6 @@ const particles = [];
         currentStreak = 0; comboMultiplier = 1;
 
         if (shieldActive) {
-          // Shield absorbs the hit — show feedback but no damage
           showPickupToast('🛡️ BLOCKED!', '#00aaff');
         } else {
           state.health -= 20;
@@ -702,9 +770,6 @@ const particles = [];
       p.mesh.material.opacity = Math.max(0, p.life);
       if (p.life <= 0) { scene.remove(p.mesh); particles.splice(i, 1); }
     }
-
-    // Power-ups
-    updatePowerups(dt);
   }
 
   renderer.render(scene, camera);
