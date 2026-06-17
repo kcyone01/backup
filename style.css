@@ -319,32 +319,33 @@ canvas {
   100% { filter: brightness(1); }
 }
 
-/* ── Combo HUD (top right) ── */
+/* ── Combo HUD (top right, below level indicator) ── */
 #combo-hud {
   position: absolute;
-  top: 40px;
+  top: 90px;
   right: 60px;
   background: rgba(0,0,0,0.85);
-  padding: 10px 20px;
-  border-bottom: 4px solid #ffcc00;
-  clip-path: polygon(12% 0, 100% 0, 100% 100%, 0 100%);
+  padding: 6px 14px 8px;
+  border-bottom: 3px solid #ffcc00;
+  clip-path: polygon(10% 0, 100% 0, 100% 100%, 0 100%);
   text-align: center;
-  min-width: 100px;
+  min-width: 80px;
 }
 
 #combo-val {
-  font-size: 2.8rem;
+  font-size: 1.4rem;
   font-weight: 900;
   color: #ffcc00;
-  text-shadow: 0 0 18px rgba(255,204,0,0.7);
+  text-shadow: 0 0 12px rgba(255,204,0,0.7);
   line-height: 1;
+  letter-spacing: 2px;
 }
 
 #combo-bar-wrap {
   width: 100%;
-  height: 4px;
+  height: 3px;
   background: rgba(255,204,0,0.15);
-  margin-top: 6px;
+  margin-top: 5px;
 }
 
 #combo-bar {
@@ -575,14 +576,18 @@ canvas {
     flex-wrap: wrap;
   }
   #combo-hud {
-    top: 20px;
+    top: 60px;
     right: 20px;
   }
   #combo-val {
-    font-size: 1.8rem;
+    font-size: 1.1rem;
   }
   #levelup-flash-text {
     font-size: 1.6rem;
+  }
+  #buff-bar {
+    bottom: 110px;
+    left: 15px;
   }
   .menu-buttons {
     flex-direction: column;
