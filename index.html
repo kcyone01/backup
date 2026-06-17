@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>CACTUS STRIKE | TACTICAL</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300ff00' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 22v-15'/><path d='M5 8v2a4 4 0 0 0 4 4h3'/><path d='M19 10v2a4 4 0 0 1-4 4h-3'/></svg>"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body class="menu-active">
+
+    <!-- Main Menu -->
+    <div id="menu-overlay" class="overlay">
+      <div class="menu-box">
+        <div class="glitch-wrapper"><h1 class="glitch">CACTUS STRIKE</h1></div>
+        <p class="subtitle">PROTOCOL: ELIMINATE ALL VEGETATION</p>
+
+        <!-- High Score Display -->
+        <div id="menu-highscore-box">
+          <span class="hud-label">HIGH SCORE</span>
+          <div id="menu-highscore">000</div>
+          <div id="menu-highscore-diff"></div>
+        </div>
+
+        <!-- Difficulty Selector -->
+        <div id="difficulty-selector">
+          <p class="diff-label">SELECT DIFFICULTY</p>
+          <div class="diff-buttons">
+            <button class="btn-diff" data-diff="recon">
+              <span class="diff-name">RECON</span>
+              <span class="diff-desc">Relaxed spawns</span>
+            </button>
+            <button class="btn-diff active" data-diff="standard">
+              <span class="diff-name">STANDARD</span>
+              <span class="diff-desc">Default challenge</span>
+            </button>
+            <button class="btn-diff" data-diff="blacksite">
+              <span class="diff-name">BLACKSITE</span>
+              <span class="diff-desc">Brutal from the start</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="menu-buttons">
+          <button id="start-btn" class="btn-tactical">INITIALIZE MISSION</button>
+          <button id="daily-btn" class="btn-tactical secondary">⚡ DAILY CHALLENGE</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Death Screen -->
+    <div id="death-overlay" class="overlay" style="display: none">
+      <div class="menu-box">
+        <h1 class="failed-text">MISSION FAILURE</h1>
+        <div class="stats-box" id="death-stats-box">
+          <div class="stats-grid">
+            <div class="stat-cell">
+              <p class="stats-label">CONFIRMED STRIKES</p>
+              <div class="final-score-wrap"><span id="final-score">000</span></div>
+            </div>
+            <div class="stat-cell">
+              <p class="stats-label">HIGH SCORE</p>
+              <div class="final-score-wrap"><span id="death-highscore">000</span></div>
+            </div>
+          </div>
+          <div class="stats-grid stats-grid-bottom">
+            <div class="stat-cell-sm">
+              <p class="stats-label">LEVEL REACHED</p>
+              <span id="final-level-val" class="stat-val">01</span>
+            </div>
+            <div class="stat-cell-sm">
+              <p class="stats-label">ACCURACY</p>
+              <span id="final-accuracy" class="stat-val">0%</span>
+            </div>
+            <div class="stat-cell-sm">
+              <p class="stats-label">BEST STREAK</p>
+              <span id="final-streak" class="stat-val">0</span>
+            </div>
+            <div class="stat-cell-sm">
+              <p class="stats-label">TIME SURVIVED</p>
+              <span id="final-time" class="stat-val">0s</span>
+            </div>
+          </div>
+          <div id="new-record-badge" style="display:none">🏆 NEW RECORD!</div>
+        </div>
+        <div class="button-group">
+          <button id="restart-btn" class="btn-tactical">REDEPLOY</button>
+          <button id="main-menu-btn" class="btn-tactical secondary">ABORT</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Victory Screen -->
+    <div id="victory-overlay" class="overlay" style="display: none">
+      <div class="menu-box">
+        <h1 class="glitch" style="color: #00ffaa; font-size: 4.8rem; margin-bottom: 15px">
+          MISSION ACCOMPLISHED
+        </h1>
+        <p style="color: #00ff00; font-size: 1.35rem; letter-spacing: 5px; margin-bottom: 40px;">
+          ALL HOSTILES NEUTRALIZED
+        </p>
+        <div class="stats-box" id="victory-stats-box">
+          <div class="stats-grid">
+            <div class="stat-cell">
+              <p class="stats-label">FINAL CONFIRMED KILLS</p>
+              <span id="victory-score" style="font-size: 7rem; font-weight: 900; color: #fff">000</span>
+            </div>
+            <div class="stat-cell">
+              <p class="stats-label">HIGH SCORE</p>
+              <div class="final-score-wrap"><span id="victory-highscore">000</span></div>
+            </div>
+          </div>
+          <div class="stats-grid stats-grid-bottom">
+            <div class="stat-cell-sm">
+              <p class="stats-label">ACCURACY</p>
+              <span id="victory-accuracy" class="stat-val">0%</span>
+            </div>
+            <div class="stat-cell-sm">
+              <p class="stats-label">BEST STREAK</p>
+              <span id="victory-streak" class="stat-val">0</span>
+            </div>
+            <div class="stat-cell-sm">
+              <p class="stats-label">TIME</p>
+              <span id="victory-time" class="stat-val">0s</span>
+            </div>
+          </div>
+          <div id="victory-record-badge" style="display:none">🏆 NEW RECORD!</div>
+        </div>
+        <div class="button-group">
+          <button id="victory-restart-btn" class="btn-tactical">NEW OPERATION</button>
+          <button id="victory-menu-btn" class="btn-tactical secondary">RETURN TO BASE</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tactical HUD -->
+    <div id="cs2-hud">
+      <div class="hud-center-score">
+        <div class="score-container">
+          <div class="hud-label">TARGETS NEUTRALIZED</div>
+          <div id="score-val">000</div>
+        </div>
+      </div>
+      <div class="hud-item health-module">
+        <div class="hud-label">VITAL SIGNS</div>
+        <div class="health-layout">
+          <div class="health-number-wrap"><span id="health-val">100</span></div>
+          <div class="health-bar-slant-container">
+            <div class="health-bar-bg">
+              <div id="health-bar-fill"></div>
+              <div class="health-grid"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Combo HUD (top right) -->
+      <div id="combo-hud" style="display:none">
+        <div class="hud-label">STREAK</div>
+        <div id="combo-val">x1</div>
+        <div id="combo-bar-wrap"><div id="combo-bar"></div></div>
+      </div>
+    </div>
+
+    <!-- Level-up flash -->
+    <div id="levelup-flash"></div>
+
+    <div class="crosshair"></div>
+
+    <!-- Loading Screen -->
+    <div id="loading-screen">
+      <div class="menu-box">
+        <h1 class="glitch" style="font-size: 3rem">INITIALIZING</h1>
+        <div class="load-bar-path"><div id="load-fill"></div></div>
+        <p class="subtitle" id="load-status">SYNCING PROTOCOLS...</p>
+      </div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+
+    <div class="support-module">
+      <a href="https://www.buymeacoffee.com/h3rozai" target="_blank">
+        <img
+          src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=☕&slug=h3rozai&button_colour=40DCA5&font_colour=ffffff&font_family=Comic&outline_colour=000000&coffee_colour=FFDD00"
+          alt="Buy Me A Coffee"
+          class="support-button-img"
+        />
+      </a>
+    </div>
+  </body>
+</html>
