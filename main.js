@@ -406,60 +406,165 @@ function triggerLevelUpFlash(lvl) {
   elLevelFlash.classList.add("active");
 }
 
-// ─── Improved spawn system ────────────────────────────────────────────────────
-// Cacti spawn in one of 5 named lanes so spread is deliberate, not random clumps.
-// Each spawn gets a randomised Z depth offset so they arrive staggered, not
-// in a single flat wave. Size also varies slightly per spawn for visual depth.
+// Small pattern label shown bottom-right when wave type changes
+const elPatternLabel = document.createElement("div");
+elPatternLabel.style.cssText = `
+  position:absolute; bottom:50px; right:60px;
+  font-size:0.65rem; letter-spacing:3px; color:rgba(0,255,0,0.55);
+  font-weight:700; pointer-events:none; font-family:'Orbitron',sans-serif;
+  transition:opacity 0.4s;
+`;
+document.getElementById("cs2-hud").appendChild(elPatternLabel);
 
-const LANES      = [-2.8, -1.4, 0, 1.4, 2.8]; // X positions (world units)
-let   lastLane   = -1;  // track last lane to avoid same-lane back-to-back
+const PATTERN_LABELS = {
+  scatter:   'SCATTER',
+  flank:     'FLANK',
+  cluster:   'CLUSTER BURST',
+  crossfire: 'CROSSFIRE',
+};
 
-function getFrustumWidth() {
-  const fovRad = THREE.MathUtils.degToRad(camera.fov);
-  const frustH = 2 * Math.tan(fovRad / 2) * 40;
-  return frustH * camera.aspect * (window.innerWidth < 768 ? 0.62 : 0.72);
+function showPatternLabel(pattern) {
+  elPatternLabel.innerText = '▸ ' + (PATTERN_LABELS[pattern] || pattern);
+  elPatternLabel.style.opacity = '1';
+  setTimeout(() => (elPatternLabel.style.opacity = '0'), 2200);
 }
 
-function spawnCactus() {
+// ─── CS2 Aim-Trainer Spawn System ────────────────────────────────────────────
+//
+// Core philosophy: targets pop INTO the playfield at a fixed, readable Z plane
+// and advance slowly. Players react to POSITION, not to a dot growing from far
+// away. This mirrors how CS2 aim trainers work — targets appear, linger just
+// long enough to demand a decision, then expire or reach the player.
+//
+// Wave patterns rotate to keep the player moving their aim:
+//   scatter   — targets appear one at a time at random positions
+//   flank     — targets appear only on the left or right third
+//   cluster   — 3 targets burst in close together, then gap
+//   crossfire — alternating left/right in quick succession
+
+const TARGET_Z       = -12;   // targets pop in close — always readable size
+const TARGET_LIFE_MS = 2800;  // ms before a target expires on its own (tuned per level)
+const BASE_SIZE      = window.innerWidth < 768 ? 3.2 : 5.5;
+
+// Playfield bounds (fraction of screen, tighter on mobile)
+const FIELD_X = window.innerWidth  < 768 ? 0.38 : 0.52;
+const FIELD_Y = window.innerWidth  < 768 ? 0.28 : 0.36;
+
+// Wave pattern state
+const PATTERNS   = ['scatter', 'flank', 'cluster', 'crossfire'];
+let   patternIdx = 0;
+let   patternTimer    = 0;   // ms until next pattern switch
+let   burstQueue      = [];  // pending spawns for cluster/crossfire bursts
+let   burstCooldown   = 0;   // ms between burst spawns
+
+function getFrustumDims() {
+  const fovRad = THREE.MathUtils.degToRad(camera.fov);
+  const frustH = 2 * Math.tan(fovRad / 2) * Math.abs(TARGET_Z - camera.position.z);
+  const frustW = frustH * camera.aspect;
+  return { w: frustW, h: frustH };
+}
+
+// Core target spawner — place one target at a specific screen-fraction position
+// sx: -1 (left) to +1 (right), sy: -1 (bottom) to +1 (top)
+function spawnTargetAt(sx, sy, lifeOverride) {
   if (!cactusMaterial || !gameRunning) return;
+  const { w, h } = getFrustumDims();
 
-  // Pick a lane, biased away from the last one
-  let laneIdx;
-  do { laneIdx = Math.floor(rng() * LANES.length); }
-  while (laneIdx === lastLane && LANES.length > 1);
-  lastLane = laneIdx;
+  // Small jitter so targets never feel pixel-perfect predictable
+  const jx = (rng() - 0.5) * 0.6;
+  const jy = (rng() - 0.5) * 0.4;
+  const x  = sx * w * FIELD_X + jx;
+  const y  = sy * h * FIELD_Y + jy + 0.8; // +0.8 keeps targets out of HUD zone
 
-  const laneX  = LANES[laneIdx];
-  // Jitter within the lane so it doesn't feel on-rails
-  const jitter = (rng() - 0.5) * 1.2;
-  const x      = laneX + jitter;
-
-  // Stagger depth: randomise spawn Z so cacti don't arrive in a flat wall
-  const zDepth = -38 - rng() * 10; // between -38 and -48
-
-  // Slight size variance for perceived depth
-  const baseSize  = window.innerWidth < 768 ? 3.8 : 7.3;
-  const sizeScale = 0.75 + rng() * 0.5; // 75%–125% of base
-  const sz        = baseSize * mobileScale * sizeScale;
+  // Size varies ±15% for variety; slightly smaller on high levels = harder
+  const diffScale = Math.max(0.65, 1 - (level - 1) * 0.022);
+  const sz = BASE_SIZE * mobileScale * diffScale * (0.88 + rng() * 0.24);
 
   const sprite = new THREE.Sprite(cactusMaterial);
   sprite.scale.set(sz, sz, 1);
+  sprite.position.set(x, y, TARGET_Z);
 
-  const y = (rng() - 0.5) * 3.5 + 2.0;
-  sprite.position.set(x, y, zDepth);
+  // Advance speed: targets still drift toward the player, but gently
+  // so there's consequence for ignoring them — they don't just hover forever
+  const advanceSpeed = 0.012 + level * 0.004;
 
-  // Speed also varies slightly per cactus so they don't travel in lock-step
-  const speedVariance = 0.85 + rng() * 0.3;
+  const lifeMs = lifeOverride ?? Math.max(1000, TARGET_LIFE_MS - level * 60);
 
   sprite.userData = {
-    rotSpeed:      0.13 * (rng() - 0.5),
-    strafeDir:     rng() > 0.5 ? 1 : -1,
-    limitX:        getFrustumWidth() / 2,
-    canStrafe:     level >= 11,
-    speedVariance,
+    rotSpeed:     0.07 * (rng() - 0.5),
+    advanceSpeed,
+    spawnTime:    Date.now(),
+    lifeMs,
   };
   scene.add(sprite);
   cacti.push(sprite);
+}
+
+// Queue a burst of targets to be spawned with small delays between them
+function enqueueBurst(positions, delayMs) {
+  positions.forEach((pos, i) => {
+    burstQueue.push({ sx: pos[0], sy: pos[1], fireAt: Date.now() + i * delayMs });
+  });
+}
+
+// Called every frame — fires queued burst spawns at the right time
+function processBurstQueue() {
+  const now = Date.now();
+  for (let i = burstQueue.length - 1; i >= 0; i--) {
+    if (now >= burstQueue[i].fireAt) {
+      spawnTargetAt(burstQueue[i].sx, burstQueue[i].sy);
+      burstQueue.splice(i, 1);
+    }
+  }
+}
+
+// Rotate through patterns; each lasts ~8–12 seconds
+function tickPattern(dt) {
+  patternTimer -= dt;
+  if (patternTimer > 0) return;
+
+  patternIdx   = (patternIdx + 1) % PATTERNS.length;
+  patternTimer = 8000 + rng() * 4000;
+  burstQueue   = [];
+  showPatternLabel(PATTERNS[patternIdx]);
+}
+
+// Called each time the spawn accumulator fires
+function spawnCactus() {
+  if (!cactusMaterial || !gameRunning) return;
+  const pattern = PATTERNS[patternIdx];
+
+  if (pattern === 'scatter') {
+    // Single random target anywhere in the field
+    const sx = (rng() - 0.5) * 2;
+    const sy = (rng() - 0.5) * 2;
+    spawnTargetAt(sx, sy);
+
+  } else if (pattern === 'flank') {
+    // Force player to track left or right side only
+    const side   = rng() > 0.5 ? 1 : -1;
+    const sx     = side * (0.5 + rng() * 0.5);
+    const sy     = (rng() - 0.5) * 2;
+    spawnTargetAt(sx, sy);
+
+  } else if (pattern === 'cluster') {
+    // 3 targets near each other — burst out with 120ms gaps
+    const cx = (rng() - 0.5) * 1.2;
+    const cy = (rng() - 0.5) * 1.2;
+    enqueueBurst([
+      [cx,              cy             ],
+      [cx + 0.25,       cy - 0.22      ],
+      [cx - 0.22,       cy + 0.28      ],
+    ], 120);
+
+  } else if (pattern === 'crossfire') {
+    // Alternating left and right — forces rapid side-to-side aim
+    const side = rng() > 0.5 ? 1 : -1;
+    enqueueBurst([
+      [ side * 0.7,  (rng() - 0.5) * 1.5 ],
+      [-side * 0.7,  (rng() - 0.5) * 1.5 ],
+    ], 180);
+  }
 }
 
 // ─── Level threshold ──────────────────────────────────────────────────────────
@@ -632,7 +737,7 @@ function startGame() {
   currentStreak = 0; bestStreak = 0;
   comboMultiplier = 1; comboTimer = 0;
   rapidFireUntil = 0; shieldUntil = 0; shieldActive = false;
-  shakeTimer = 0; lastLane = -1;
+  shakeTimer = 0; patternIdx = 0; patternTimer = 8000; burstQueue = []; burstCooldown = 0;
   camera.position.copy(camOrigin);
 
   const preset  = DIFFICULTIES[selectedDifficulty];
@@ -723,29 +828,37 @@ const particles = [];
     }
     updateComboHud();
 
-    // Spawn
+    // Pattern rotation & burst queue
+    tickPattern(dt);
+    processBurstQueue();
+
+    // Spawn — only when burst queue is clear, keep target count tight
     accumulator += dt;
-    const cap = isMobile ? 20 : 38;
-    while (accumulator >= spawnInterval && cacti.length < cap) {
+    const cap = isMobile ? 7 : 10;
+    if (accumulator >= spawnInterval && cacti.length < cap && burstQueue.length === 0) {
       spawnCactus();
-      accumulator -= spawnInterval;
+      accumulator = 0;
     }
 
-    // Move cacti
+    // Move & expire cacti
+    const nowMs = Date.now();
     for (let i = cacti.length - 1; i >= 0; i--) {
       const c  = cacti[i];
       const ud = c.userData;
-      c.position.z += cactusSpeed * ud.speedVariance;
-      if (ud.canStrafe) {
-        c.position.x += ud.strafeDir * strafeSpeed;
-        if (Math.abs(c.position.x) > ud.limitX) {
-          ud.strafeDir *= -1;
-          c.position.x = ud.limitX * Math.sign(c.position.x);
-        }
-      }
+
+      // Gentle drift toward player (consequence for ignoring targets)
+      c.position.z += ud.advanceSpeed;
       c.material.rotation += ud.rotSpeed;
 
-      if (c.position.z > 7) {
+      // Fade out in last 400ms so expiry is telegraphed
+      const age      = nowMs - ud.spawnTime;
+      const timeLeft = ud.lifeMs - age;
+      if (timeLeft < 400) c.material.opacity = Math.max(0, timeLeft / 400);
+
+      const expired  = age >= ud.lifeMs;
+      const breached = c.position.z > 6;
+
+      if (expired || breached) {
         scene.remove(c);
         cacti.splice(i, 1);
         currentStreak = 0; comboMultiplier = 1;
